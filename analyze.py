@@ -37,12 +37,11 @@ def cleanPassage(rawtext):
 def getLemmas(tokens):
     # lemmatize
     lemmas = [tok.lemma_.lower().strip() for tok in tokens]
-#    lemmas = []
-#    for tok in tokens:
-#        lemmas.append(tok.lemma_.lower().strip())
     return lemmas
 
-def makeNodelist(tokens):
+def makeNodelist(row):
+    tokens = row['tokens']
+    uid = row['uid']
     BADPOS = ['PUNCT','NUM','X']
     SYMBOLS = " ".join(string.punctuation).split(" ")#+[">","<","|","/","\\"]
     nodes = []
@@ -53,7 +52,6 @@ def makeNodelist(tokens):
         isMeaningful = tok.prob > probs_cutoff
         if goodPOS and notStopword and notSymbol and isMeaningful:
             nodes.append(tok.lemma_+' '+tok.pos_+' '+str(tok.prob))
-#            nodes.append(tok.lemma_)
     return nodes
 
 def findMeaningfulCutoffProbability(alltokens):
@@ -73,15 +71,17 @@ def findMeaningfulCutoffProbability(alltokens):
     return probs_cutoff
 
 
-def buildNetwork(nodesLOL):
+def buildNetwork(nodesLOL,attr={}):
     #http://stackoverflow.com/questions/10649673/how-to-generate-a-fully-connected-subgraph-from-node-list-using-pythons-network
-    
+    #If we have the same word repeated anywhere, we only make one node for it
+    #TODO: add attribute that tracks UIDs for every source that a node appears in
     G = nx.Graph()
     for nodeslist in nodesLOL:
         Gnew=nx.complete_graph(len(nodeslist))
-        nx.relabel_nodes(Gnew,dict(enumerate(nodeslist)), copy=False)
+        nx.relabel_nodes(Gnew,dict(enumerate(nodeslist)),copy=False)
+        for attrname,attrmappings in attr.items():
+            nx.set_node_attributes(Gnew,attrname,attrmappings)
         G = nx.compose(G,Gnew)   
-    
     return G
 
   
@@ -91,32 +91,45 @@ if __name__ == '__main__':
     #Read descriptions of concepts (or read in words)
     path = '/Volumes/SanDisk/01 Data and Analysis/original data/Grouped & Novice/Grouped & Novice - RAW Data.csv'
     gn = pd.read_csv(path)#, usecols=['Text: Verbatim','Interpretation (Entries without words - Raw data contain only words)'])
-    gn.rename(columns={'Text: Verbatim':'raw'},inplace=True)
-    
-    #Split into data structure (if necessary)
-    
+    gn.rename(columns={'Text: Verbatim':'raw','Image No':'uid'},inplace=True)
+        
     #clean passages
     gn['tokens'] = gn['raw'].apply(lambda x: cleanPassage(x))
-#    gn['lemmas'] = gn['tokens'].apply(lambda x: getLemmas(x))
     
     probs_cutoff = findMeaningfulCutoffProbability([t for tok in gn['tokens'] for t in tok])
-    gn['nodeslist'] = gn['tokens'].apply(lambda tok: makeNodelist(tok))
+    gn['nodeslist'] = gn.apply(makeNodelist,axis=1)
+
 
     
     #build network
-    G_gn = buildNetwork([n for n in gn['nodeslist']])
+    iddict = {index:row['nodeslist'] for index,row in gn.iterrows()}
+    G_gn = buildNetwork([n for n in gn['nodeslist']])#,{'conceptid':{row['nodeslist']:index for index,row in gn.iterrows()})   # {m:gn[ for n in gn['nodeslist'] for m in n}})
+    
+    #add attributes to nodes
+    #concept id (from pandas table row?)
+
+    
     
     #calculate modularity
     community_growth = []
     max_cliques = 20
     for k in range(max_cliques):
         community_growth.append(len(list(nx.k_clique_communities(G_gn,k+2))))
-    plt.plot([k for k in range(2,max_cliques+1+2)],community_growth,'*')
+    plt.plot([k for k in range(2,max_cliques+2)],community_growth,'*')
     plt.xlabel('clique size (k)')
     plt.ylabel('Qty Clique Communities')
-    plt.title('Number of cliques vs clique size via percolation method')
+    plt.title('Number of k-clique communities vs clique size via percolation method')
     plt.grid()
     plt.show()
     
     #write out gephi file for visualization
     nx.write_graphml(G_gn,'gn.graphml')
+    
+    
+    #----maybe move this later, just taking notes right now----
+    #assign a module ID to each node
+    
+    #compare module assignments between manual ratings and automatic ratings
+    #current idea: greedily assign manual to automatic by calculating jaccard sim
+        #assign, remove from set, repeat
+        #measure of performance = minimize(avg(all jaccard similarities))

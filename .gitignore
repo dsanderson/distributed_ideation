@@ -1,0 +1,4 @@
+spacy*
+junk*
+.ipynb_checkpoints*
+*.graphml
