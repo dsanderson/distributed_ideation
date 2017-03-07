@@ -14,6 +14,10 @@ from nltk.corpus import stopwords as stopwords
 import networkx as nx
 import string
 import matplotlib.pyplot as plt
+from tqdm import tqdm
+from sklearn.cluster import DBSCAN
+import numpy as np
+from math import inf
 
 def cleanPassage(rawtext):
     #some code from https://nicschrading.com/project/Intro-to-NLP-with-spaCy/
@@ -42,17 +46,31 @@ def getLemmas(tokens):
 def makeNodelist(row):
     tokens = row['tokens']
     uid = row['uid']
-    BADPOS = ['PUNCT','NUM','X']
-    SYMBOLS = " ".join(string.punctuation).split(" ")#+[">","<","|","/","\\"]
+    BADPOS = ['PUNCT','NUM','X','SPACE']
+    SYMBOLS = " ".join(string.punctuation).split(" ")#+[">","<","|","/","\"]
     nodes = []
     for tok in tokens:
         goodPOS = tok.pos_ not in BADPOS 
         notStopword = tok.orth_ not in stopwords.words('english')
-        notSymbol= tok.orth_ not in SYMBOLS
+        notSymbol = tok.orth_ not in SYMBOLS
         isMeaningful = tok.prob > probs_cutoff
         if goodPOS and notStopword and notSymbol and isMeaningful:
-            nodes.append(tok.lemma_+' '+tok.pos_+' '+str(tok.prob))
+            nodes.append(tok.lemma_+' '+tok.pos_)
     return nodes
+
+def makeNodelist2(tokens):
+    BADPOS = ['PUNCT','NUM','X','SPACE']
+    SYMBOLS = " ".join(string.punctuation).split(" ")#+[">","<","|","/","\"]
+    nodes = []
+    for tok in tokens:
+        goodPOS = tok.pos_ not in BADPOS 
+        notStopword = tok.orth_ not in stopwords.words('english')
+        notSymbol = tok.orth_ not in SYMBOLS
+        isMeaningful = tok.prob > probs_cutoff
+        if goodPOS and notStopword and notSymbol and isMeaningful:
+            nodes.append(tok.lemma_+' '+tok.pos_)
+    return nodes
+        
 
 def findMeaningfulCutoffProbability(alltokens):
     probs = [tok.prob for tok in alltokens]
@@ -76,7 +94,7 @@ def buildNetwork(nodesLOL,attr={}):
     #If we have the same word repeated anywhere, we only make one node for it
     #TODO: add attribute that tracks UIDs for every source that a node appears in
     G = nx.Graph()
-    for nodeslist in nodesLOL:
+    for nodeslist in tqdm(nodesLOL,desc='Bulding Network'):
         Gnew=nx.complete_graph(len(nodeslist))
         nx.relabel_nodes(Gnew,dict(enumerate(nodeslist)),copy=False)
         for attrname,attrmappings in attr.items():
@@ -84,36 +102,76 @@ def buildNetwork(nodesLOL,attr={}):
         G = nx.compose(G,Gnew)   
     return G
 
-  
+def plotPgvGraph(G,filename=None,printRelationships=None,promoteNodeLabels=None):
+    #network plotting from old IBFM project
+    G2 = G.copy()
+    
+    #print relationships on edges
+    if printRelationships:
+        for n,nbrs in G2.adjacency_iter():
+            for nbr in nbrs.keys():
+                for edgeKey,edgeProperties in G2[n][nbr].items():
+                    G2[n][nbr][edgeKey]['label'] = edgeProperties[printRelationships]
+                    
+    #promote the attribute in promoteNodeLabels to node label
+    if promoteNodeLabels:
+        for n in G2.nodes_iter():
+            try:
+                G2.node[n]['label'] = G2.node[n][promoteNodeLabels]
+            except:
+                G2.node[n]['label'] = None
+    
+    #draw graph
+    thisG = nx.drawing.nx_pydot.to_pydot(G2)
+    
+    if filename==None:
+        filename = 'plots/'+ 'junk' + '.svg'
+    thisG.write(filename,format='svg')  
 
+def dumpDataFrame():
+    return 0
         
 if __name__ == '__main__':
     #Read descriptions of concepts (or read in words)
-    path = '/Volumes/SanDisk/01 Data and Analysis/original data/Grouped & Novice/Grouped & Novice - RAW Data.csv'
-    gn = pd.read_csv(path)#, usecols=['Text: Verbatim','Interpretation (Entries without words - Raw data contain only words)'])
+
+    basepath = '/Volumes/SanDisk/01 Data and Analysis/original data/Grouped & Novice/'
+    basename = 'Grouped & Novice - '
+    namespecifier = 'RAW Data'
+    fileextension = '.csv'
+#    path = basepath + basename + namespecifier + fileextension
+#    path = '/Volumes/SanDisk/01 Data and Analysis/01 network anlysis - gephi/test_graph_data.csv'
+    path = '/Volumes/SanDisk/01 Data and Analysis/raw data/Distributed Experience and Novice (superset) clean subset.csv'
+#    path = '/Volumes/SanDisk/01 Data and Analysis/raw data/Distributed Experience and Novice (superset) clean 2.csv'
+#    path = '/Volumes/SanDisk/01 Data and Analysis/raw data/test.csv'
+    gn = pd.read_csv(path)#,sep='\t')#,error_bad_lines=False)
     gn.rename(columns={'Text: Verbatim':'raw','Image No':'uid'},inplace=True)
         
     #clean passages
-    gn['tokens'] = gn['raw'].apply(lambda x: cleanPassage(x))
+    tqdm.pandas(desc="Make Spacy Tokens")
+    gn['tokens'] = gn['raw'].progress_apply(lambda x: cleanPassage(x))
+    gn['lemmas'] = gn['tokens'].apply(lambda x: getLemmas(x))
     
     probs_cutoff = findMeaningfulCutoffProbability([t for tok in gn['tokens'] for t in tok])
-    gn['nodeslist'] = gn.apply(makeNodelist,axis=1)
+#    gn['nodeslist'] = gn.apply(makeNodelist,axis=1)
+    tqdm.pandas(desc="Make Nodeslist")
+    gn['nodeslist'] = gn['tokens'].progress_apply(lambda x: makeNodelist2(x))
 
-
+    print('Done making nodelist')
     
+    #%%
     #build network
-    iddict = {index:row['nodeslist'] for index,row in gn.iterrows()}
+#    iddict = {index:row['nodeslist'] for index,row in gn.iterrows()}
     G_gn = buildNetwork([n for n in gn['nodeslist']])#,{'conceptid':{row['nodeslist']:index for index,row in gn.iterrows()})   # {m:gn[ for n in gn['nodeslist'] for m in n}})
-    
+    print('Done making network')
     #add attributes to nodes
     #concept id (from pandas table row?)
-
+    #%%
     
     
     #calculate modularity
     community_growth = []
     max_cliques = 20
-    for k in range(max_cliques):
+    for k in tqdm(range(max_cliques),desc='Running k-clique modularity algorithm'):
         community_growth.append(len(list(nx.k_clique_communities(G_gn,k+2))))
     plt.plot([k for k in range(2,max_cliques+2)],community_growth,'*')
     plt.xlabel('clique size (k)')
@@ -122,12 +180,28 @@ if __name__ == '__main__':
     plt.grid()
     plt.show()
     
+    #%%
     #write out gephi file for visualization
     nx.write_graphml(G_gn,'gn.graphml')
     
+    #write out dataframe for posterity
+    outpath = '/Volumes/SanDisk/01 Data and Analysis/01 network anlysis - gephi/test_graph_processed.csv'
+    outpath = '/Volumes/SanDisk/01 Data and Analysis/01 network anlysis - gephi/test_graph_processed.csv'
+    gn.to_csv(outpath,encoding='utf-8')
     
+    #%%
+    full_distance_matrix = nx.floyd_warshall_numpy(G_gn)
+    fmax = np.finfo(np.float64).max
+    full_distance_matrix[full_distance_matrix==inf] = fmax
+    db = DBSCAN(eps=1.0,min_samples=100,metric='precomputed').fit(full_distance_matrix)
+    print(db.labels_)
+    print(db.components_)
+    
+#    outpath = '/Volumes/SanDisk/01 Data and Analysis/01 network anlysis - gephi/test_graph_fig.svg'
+#    plotPgvGraph(G_gn,outpath)
     #----maybe move this later, just taking notes right now----
     #assign a module ID to each node
+    
     
     #compare module assignments between manual ratings and automatic ratings
     #current idea: greedily assign manual to automatic by calculating jaccard sim
