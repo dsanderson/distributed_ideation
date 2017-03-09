@@ -15,9 +15,11 @@ import networkx as nx
 import string
 import matplotlib.pyplot as plt
 from tqdm import tqdm
-from sklearn.cluster import DBSCAN
 import numpy as np
 from math import inf
+import hdbscan
+from datetime import datetime
+
 
 def cleanPassage(rawtext):
     #some code from https://nicschrading.com/project/Intro-to-NLP-with-spaCy/
@@ -43,34 +45,39 @@ def getLemmas(tokens):
     lemmas = [tok.lemma_.lower().strip() for tok in tokens]
     return lemmas
 
-def makeNodelist(row):
-    tokens = row['tokens']
-    uid = row['uid']
-    BADPOS = ['PUNCT','NUM','X','SPACE']
+
+def makeNodelist(tokens):
+#    BADPOS = ['PUNCT','NUM','X','SPACE']
+    GOODPOS = ['NOUN','PROPN','VERB','ADJ','ADV']
     SYMBOLS = " ".join(string.punctuation).split(" ")#+[">","<","|","/","\"]
+    probs_cutoff_upper = -7.6 #by inspection of sample data
     nodes = []
     for tok in tokens:
-        goodPOS = tok.pos_ not in BADPOS 
+        goodPOS = tok.pos_ in GOODPOS 
         notStopword = tok.orth_ not in stopwords.words('english')
         notSymbol = tok.orth_ not in SYMBOLS
-        isMeaningful = tok.prob > probs_cutoff
+        isMeaningful = tok.prob > probs_cutoff_lower and tok.prob < probs_cutoff_upper
+        
         if goodPOS and notStopword and notSymbol and isMeaningful:
             nodes.append(tok.lemma_+' '+tok.pos_)
     return nodes
 
-def makeNodelist2(tokens):
-    BADPOS = ['PUNCT','NUM','X','SPACE']
-    SYMBOLS = " ".join(string.punctuation).split(" ")#+[">","<","|","/","\"]
-    nodes = []
-    for tok in tokens:
-        goodPOS = tok.pos_ not in BADPOS 
-        notStopword = tok.orth_ not in stopwords.words('english')
-        notSymbol = tok.orth_ not in SYMBOLS
-        isMeaningful = tok.prob > probs_cutoff
-        if goodPOS and notStopword and notSymbol and isMeaningful:
-            nodes.append(tok.lemma_+' '+tok.pos_)
-    return nodes
-        
+#def makeNodelist2(tokensuid):
+#    
+##    BADPOS = ['PUNCT','NUM','X','SPACE']
+#    GOODPOS = ['NOUN','PROPN','VERB','ADJ','ADV']
+#    SYMBOLS = " ".join(string.punctuation).split(" ")#+[">","<","|","/","\"]
+#    probs_cutoff_upper = -7.6 #by inspection of sample data
+#    nodes = []
+#    for tok in tokens:
+#        goodPOS = tok.pos_ in GOODPOS 
+#        notStopword = tok.orth_ not in stopwords.words('english')
+#        notSymbol = tok.orth_ not in SYMBOLS
+#        isMeaningful = tok.prob > probs_cutoff_lower and tok.prob < probs_cutoff_upper
+#        
+#        if goodPOS and notStopword and notSymbol and isMeaningful:
+#            nodes.append(tok.lemma_+' '+tok.pos_)
+#    return nodes        
 
 def findMeaningfulCutoffProbability(alltokens):
     probs = [tok.prob for tok in alltokens]
@@ -85,20 +92,23 @@ def findMeaningfulCutoffProbability(alltokens):
 #    probs_cutoff = probs[int(input("By inspection, at which rank is the elbow for the log probability plot? [integer]"))]
     
     #removing the lowest observed probability seems to remove most of the spelling errors
-    probs_cutoff = min(probs)
-    return probs_cutoff
+    probs_cutoff_lower = min(probs)
+    return probs_cutoff_lower
 
 
 def buildNetwork(nodesLOL,attr={}):
     #http://stackoverflow.com/questions/10649673/how-to-generate-a-fully-connected-subgraph-from-node-list-using-pythons-network
     #If we have the same word repeated anywhere, we only make one node for it
-    #TODO: add attribute that tracks UIDs for every source that a node appears in
     G = nx.Graph()
     for nodeslist in tqdm(nodesLOL,desc='Bulding Network'):
         Gnew=nx.complete_graph(len(nodeslist))
         nx.relabel_nodes(Gnew,dict(enumerate(nodeslist)),copy=False)
-        for attrname,attrmappings in attr.items():
-            nx.set_node_attributes(Gnew,attrname,attrmappings)
+        if attr:
+            this_attr = {k:None for k in attr.keys()}
+            for key in this_attr.keys():
+                this_attr[key] = {k:attr[key][k] for k in nodeslist}
+            for attrname,attrmappings in this_attr.items():
+                nx.set_node_attributes(Gnew,attrname,attrmappings)
         G = nx.compose(G,Gnew)   
     return G
 
@@ -128,47 +138,8 @@ def plotPgvGraph(G,filename=None,printRelationships=None,promoteNodeLabels=None)
         filename = 'plots/'+ 'junk' + '.svg'
     thisG.write(filename,format='svg')  
 
-def dumpDataFrame():
-    return 0
-        
-if __name__ == '__main__':
-    #Read descriptions of concepts (or read in words)
-
-    basepath = '/Volumes/SanDisk/01 Data and Analysis/original data/Grouped & Novice/'
-    basename = 'Grouped & Novice - '
-    namespecifier = 'RAW Data'
-    fileextension = '.csv'
-#    path = basepath + basename + namespecifier + fileextension
-#    path = '/Volumes/SanDisk/01 Data and Analysis/01 network anlysis - gephi/test_graph_data.csv'
-    path = '/Volumes/SanDisk/01 Data and Analysis/raw data/Distributed Experience and Novice (superset) clean subset.csv'
-#    path = '/Volumes/SanDisk/01 Data and Analysis/raw data/Distributed Experience and Novice (superset) clean 2.csv'
-#    path = '/Volumes/SanDisk/01 Data and Analysis/raw data/test.csv'
-    gn = pd.read_csv(path)#,sep='\t')#,error_bad_lines=False)
-    gn.rename(columns={'Text: Verbatim':'raw','Image No':'uid'},inplace=True)
-        
-    #clean passages
-    tqdm.pandas(desc="Make Spacy Tokens")
-    gn['tokens'] = gn['raw'].progress_apply(lambda x: cleanPassage(x))
-    gn['lemmas'] = gn['tokens'].apply(lambda x: getLemmas(x))
-    
-    probs_cutoff = findMeaningfulCutoffProbability([t for tok in gn['tokens'] for t in tok])
-#    gn['nodeslist'] = gn.apply(makeNodelist,axis=1)
-    tqdm.pandas(desc="Make Nodeslist")
-    gn['nodeslist'] = gn['tokens'].progress_apply(lambda x: makeNodelist2(x))
-
-    print('Done making nodelist')
-    
-    #%%
-    #build network
-#    iddict = {index:row['nodeslist'] for index,row in gn.iterrows()}
-    G_gn = buildNetwork([n for n in gn['nodeslist']])#,{'conceptid':{row['nodeslist']:index for index,row in gn.iterrows()})   # {m:gn[ for n in gn['nodeslist'] for m in n}})
-    print('Done making network')
-    #add attributes to nodes
-    #concept id (from pandas table row?)
-    #%%
-    
-    
-    #calculate modularity
+def calculateModularity():
+    #very slow!
     community_growth = []
     max_cliques = 20
     for k in tqdm(range(max_cliques),desc='Running k-clique modularity algorithm'):
@@ -179,23 +150,117 @@ if __name__ == '__main__':
     plt.title('Number of k-clique communities vs clique size via percolation method')
     plt.grid()
     plt.show()
+
+def dumpTokenProbabilities(tokens,path):
+    print('Dumping token probabilities ' + str(datetime.now()))
+    sorted_tokens = sorted([(t.prob,t) for t in tokens],key=lambda tup: tup[0])
+    probs_dict = {'probs':[e[0] for e in sorted_tokens],'words':[e[1] for e in sorted_tokens]}
+    probs_results = pd.DataFrame(probs_dict)
+    probs_results.to_csv(path)
+    
+def generateAttributesDict(tokens,uids,nodeslist):
+    d = {}
+    d['uid'] = {}
+    d['token'] = {}
+    for token,uid,nodelist in zip(tokens,uids,nodeslist):
+        for node,t in zip(nodelist,token):
+            try:
+                d['uid'][node].append(uid)
+            except:
+                d['uid'][node] = [uid]
+            try:
+                d['token'][node].append(t)
+            except:
+                d['token'][node] = [t]
+    return d
+
+if __name__ == '__main__':
+    #Read descriptions of concepts (or read in words)
+    inputbasepath = '/Volumes/SanDisk/Repos/distributed_ideation/input_data/'
+    outputbasepath = '/Volumes/SanDisk/Repos/distributed_ideation/results/'
+#    basename = 'Distributed Experience and Novice (superset) clean'
+    basename = 'Distributed Experience and Novice (superset) clean TEST SAMPLE'
+#    basename = 'Group Experienced first and second round (unique set) clean'
+    fileextension = '.csv'
+    path = inputbasepath + basename + fileextension
+#    path = '/Volumes/SanDisk/01 Data and Analysis/01 network anlysis - gephi/test_graph_data.csv'
+#    path = '/Volumes/SanDisk/01 Data and Analysis/raw data/Distributed Experience and Novice (superset) clean subset.csv'
+#    path = '/Volumes/SanDisk/01 Data and Analysis/raw data/Distributed Experience and Novice (superset) clean 2.csv'
+#    path = '/Volumes/SanDisk/01 Data and Analysis/raw data/test.csv'
+
+    
+    gn = pd.read_csv(path)
+    gn.rename(columns={'Text: Verbatim':'raw','Unique ID':'uid'},inplace=True)
+        
+    #clean passages
+    tqdm.pandas(desc="Make Spacy Tokens")
+    gn['tokens'] = gn['raw'].progress_apply(lambda x: cleanPassage(x))
+    gn['lemmas'] = gn['tokens'].apply(lambda x: getLemmas(x))
+    
+    probs_cutoff_lower = findMeaningfulCutoffProbability([t for tok in gn['tokens'] for t in tok])
+    tqdm.pandas(desc="Make Nodeslist")
+    gn['nodeslist'] = gn['tokens'].progress_apply(lambda x: makeNodelist(x))
+    
+    #Generate attributes for nodes in the graph
+    nodeAttributesDict = generateAttributesDict(gn.tokens,gn.uid,gn.nodeslist)
+
+    print('Done making nodelist ' + str(datetime.now()))
+    
+    path = outputbasepath + basename + ' word probabilities.csv'
+    dumpTokenProbabilities([t for tok in gn['tokens'] for t in tok],path)
+    #%%
+    #build network
+#    iddict = {index:row['nodeslist'] for index,row in gn.iterrows()}
+    G_gn = buildNetwork([n for n in gn['nodeslist']],nodeAttributesDict)#,{'conceptid':{row['nodeslist']:index for index,row in gn.iterrows()})   # {m:gn[ for n in gn['nodeslist'] for m in n}})
+    print('Done making network ' + str(datetime.now()))
+    #add attributes to nodes
+    #concept id (from pandas table row?)
+    #%%
+    #calculate modularity
+    
+    print('Calculating Modularity ' + str(datetime.now()))
+#    calculateModularity()
     
     #%%
     #write out gephi file for visualization
-    nx.write_graphml(G_gn,'gn.graphml')
+    print('Writing graphml file ' + str(datetime.now()))
+    outpath = outputbasepath+basename+' graphml'+'.graphml'
+    #need copy because nx.write_graphml cant handle spacy tokens
+    #build attributeless copy because spacy tokens break G.copy()
+    G_gn_shallow = buildNetwork([n for n in gn['nodeslist']])
+    nx.write_graphml(G_gn_shallow,outpath)
     
-    #write out dataframe for posterity
-    outpath = '/Volumes/SanDisk/01 Data and Analysis/01 network anlysis - gephi/test_graph_processed.csv'
-    outpath = '/Volumes/SanDisk/01 Data and Analysis/01 network anlysis - gephi/test_graph_processed.csv'
+    #write out dataframe for future analysis
+    print('Writing out dataframe ' + str(datetime.now()))
+    outpath = outputbasepath+basename+' dataframe'+'.csv'
     gn.to_csv(outpath,encoding='utf-8')
     
     #%%
+    print('Generating distance matrix ' + str(datetime.now()))
     full_distance_matrix = nx.floyd_warshall_numpy(G_gn)
     fmax = np.finfo(np.float64).max
     full_distance_matrix[full_distance_matrix==inf] = fmax
-    db = DBSCAN(eps=1.0,min_samples=100,metric='precomputed').fit(full_distance_matrix)
-    print(db.labels_)
-    print(db.components_)
+    outpath = outputbasepath+basename+' distance matrix'+'.csv'
+    np.savetxt(outpath,full_distance_matrix,delimiter=",")
+    
+    #%% Cluster with HDBSCAN- takes the guesswork out of determining similarity parameter
+    print('Clustering with HDBSCAN ' + str(datetime.now()))
+    clusterer = hdbscan.HDBSCAN(min_cluster_size=10)
+    cluster_labels = clusterer.fit_predict(full_distance_matrix)
+    
+    #%% Write out clustering results
+    print('Writing out clustering results ' + str(datetime.now()))
+    clustering_results_d = {'nodes':G_gn.nodes(),
+                            'clusters':cluster_labels,
+                            'uids':[nx.get_node_attributes(G_gn,'uid')[n] for n in G_gn.nodes()]
+                            }
+    clustering_results = pd.DataFrame(clustering_results_d)
+    clustering_results['nodeDegree'] = clustering_results['nodes'].apply(lambda x: G_gn.degree(x))
+    clustering_results['frequency'] = clustering_results['uids'].apply(lambda x: len(x))
+    outpath = outputbasepath+basename+' clustering results'+'.csv'
+    clustering_results.to_csv(outpath,encoding='utf-8')
+    
+    #%%
     
 #    outpath = '/Volumes/SanDisk/01 Data and Analysis/01 network anlysis - gephi/test_graph_fig.svg'
 #    plotPgvGraph(G_gn,outpath)

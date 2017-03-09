@@ -2,3 +2,5 @@ spacy*
 junk*
 .ipynb_checkpoints*
 *.graphml
+input_data/
+results/
