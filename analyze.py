@@ -46,9 +46,12 @@ def getLemmas(tokens):
     return lemmas
 
 
-def makeNodelist(tokens):
+def makeNodelist(tokens,limitPOS=None):
 #    BADPOS = ['PUNCT','NUM','X','SPACE']
-    GOODPOS = ['NOUN','PROPN','VERB','ADJ','ADV']
+    if limitPOS:
+        GOODPOS = limitPOS
+    else:
+        GOODPOS = ['NOUN','PROPN','VERB','ADJ','ADV']
     SYMBOLS = " ".join(string.punctuation).split(" ")#+[">","<","|","/","\"]
     probs_cutoff_upper = -7.6 #by inspection of sample data
     nodes = []
@@ -60,24 +63,7 @@ def makeNodelist(tokens):
         
         if goodPOS and notStopword and notSymbol and isMeaningful:
             nodes.append(tok.lemma_+' '+tok.pos_)
-    return nodes
-
-#def makeNodelist2(tokensuid):
-#    
-##    BADPOS = ['PUNCT','NUM','X','SPACE']
-#    GOODPOS = ['NOUN','PROPN','VERB','ADJ','ADV']
-#    SYMBOLS = " ".join(string.punctuation).split(" ")#+[">","<","|","/","\"]
-#    probs_cutoff_upper = -7.6 #by inspection of sample data
-#    nodes = []
-#    for tok in tokens:
-#        goodPOS = tok.pos_ in GOODPOS 
-#        notStopword = tok.orth_ not in stopwords.words('english')
-#        notSymbol = tok.orth_ not in SYMBOLS
-#        isMeaningful = tok.prob > probs_cutoff_lower and tok.prob < probs_cutoff_upper
-#        
-#        if goodPOS and notStopword and notSymbol and isMeaningful:
-#            nodes.append(tok.lemma_+' '+tok.pos_)
-#    return nodes        
+    return nodes  
 
 def findMeaningfulCutoffProbability(alltokens):
     probs = [tok.prob for tok in alltokens]
@@ -139,17 +125,29 @@ def plotPgvGraph(G,filename=None,printRelationships=None,promoteNodeLabels=None)
     thisG.write(filename,format='svg')  
 
 def calculateModularity():
-    #very slow!
+    #very slow!, exp(N) complexity
     community_growth = []
+    communities = []
     max_cliques = 20
     for k in tqdm(range(max_cliques),desc='Running k-clique modularity algorithm'):
-        community_growth.append(len(list(nx.k_clique_communities(G_gn,k+2))))
+        communities.append(list(nx.k_clique_communities(G_gn,k+2)))
+    community_growth = [len(list(x)) for x in communities]
     plt.plot([k for k in range(2,max_cliques+2)],community_growth,'*')
     plt.xlabel('clique size (k)')
     plt.ylabel('Qty Clique Communities')
     plt.title('Number of k-clique communities vs clique size via percolation method')
     plt.grid()
     plt.show()
+    
+    return [k for k in range(2,max_cliques+2)],communities
+
+def buildModularityList(minsizes,modules):
+    d3 = {}
+    for minsize,m in zip(minsizes,modules):
+        d = {k:v for k,v in zip(range(len(m)),m)}
+        d2 = {v:k for k,val in d.items() for v in list(val)}
+        d3[minsize] = d2
+    return d3
 
 def dumpTokenProbabilities(tokens,path):
     print('Dumping token probabilities ' + str(datetime.now()))
@@ -183,11 +181,9 @@ if __name__ == '__main__':
 #    basename = 'Group Experienced first and second round (unique set) clean'
     fileextension = '.csv'
     path = inputbasepath + basename + fileextension
-#    path = '/Volumes/SanDisk/01 Data and Analysis/01 network anlysis - gephi/test_graph_data.csv'
-#    path = '/Volumes/SanDisk/01 Data and Analysis/raw data/Distributed Experience and Novice (superset) clean subset.csv'
-#    path = '/Volumes/SanDisk/01 Data and Analysis/raw data/Distributed Experience and Novice (superset) clean 2.csv'
-#    path = '/Volumes/SanDisk/01 Data and Analysis/raw data/test.csv'
-
+  
+    #Add test to check whether dataframe already exists as a file
+    #Then we can just read that in instead of processing raw again
     
     gn = pd.read_csv(path)
     gn.rename(columns={'Text: Verbatim':'raw','Unique ID':'uid'},inplace=True)
@@ -219,7 +215,10 @@ if __name__ == '__main__':
     #calculate modularity
     
     print('Calculating Modularity ' + str(datetime.now()))
-#    calculateModularity()
+    mincliques,modules = calculateModularity()
+    
+    moduleResultsDict = buildModularityList(mincliques,modules)
+    
     
     #%%
     #write out gephi file for visualization
@@ -244,19 +243,22 @@ if __name__ == '__main__':
     np.savetxt(outpath,full_distance_matrix,delimiter=",")
     
     #%% Cluster with HDBSCAN- takes the guesswork out of determining similarity parameter
-    print('Clustering with HDBSCAN ' + str(datetime.now()))
-    clusterer = hdbscan.HDBSCAN(min_cluster_size=10)
-    cluster_labels = clusterer.fit_predict(full_distance_matrix)
+#    print('Clustering with HDBSCAN ' + str(datetime.now()))
+#    clusterer = hdbscan.HDBSCAN(min_cluster_size=10)
+#    cluster_labels = clusterer.fit_predict(full_distance_matrix)
     
     #%% Write out clustering results
     print('Writing out clustering results ' + str(datetime.now()))
     clustering_results_d = {'nodes':G_gn.nodes(),
-                            'clusters':cluster_labels,
+#                            'clusters':cluster_labels,
                             'uids':[nx.get_node_attributes(G_gn,'uid')[n] for n in G_gn.nodes()]
                             }
     clustering_results = pd.DataFrame(clustering_results_d)
     clustering_results['nodeDegree'] = clustering_results['nodes'].apply(lambda x: G_gn.degree(x))
     clustering_results['frequency'] = clustering_results['uids'].apply(lambda x: len(x))
+    for k,v in moduleResultsDict.items():
+#        vdict = {v:k for k,v in v.items()}
+        clustering_results['minClique='+str(k)] = clustering_results['nodes'].map(v)
     outpath = outputbasepath+basename+' clustering results'+'.csv'
     clustering_results.to_csv(outpath,encoding='utf-8')
     
