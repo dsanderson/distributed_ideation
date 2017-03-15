@@ -57,7 +57,7 @@ def makeNodelist(tokens,limitPOS=None):
     nodes = []
     for tok in tokens:
         goodPOS = tok.pos_ in GOODPOS 
-        notStopword = tok.orth_ not in stopwords.words('english')
+        notStopword = tok.orth_ not in stopwords.words('english')c
         notSymbol = tok.orth_ not in SYMBOLS
         isMeaningful = tok.prob > probs_cutoff_lower and tok.prob < probs_cutoff_upper
         
@@ -170,14 +170,17 @@ def generateAttributesDict(tokens,uids,nodeslist):
                 d['token'][node].append(t)
             except:
                 d['token'][node] = [t]
+    #keep only unique uids
+    for node,uidlist in d['uid'].items():
+        d['uid'][node] = list(set(d['uid'][node]))
     return d
 
 if __name__ == '__main__':
     #Read descriptions of concepts (or read in words)
     inputbasepath = '/Volumes/SanDisk/Repos/distributed_ideation/input_data/'
     outputbasepath = '/Volumes/SanDisk/Repos/distributed_ideation/results/'
-#    basename = 'Distributed Experience and Novice (superset) clean'
-    basename = 'Distributed Experience and Novice (superset) clean TEST SAMPLE'
+    basename = 'Distributed Experience and Novice (superset) clean'
+#     basename = 'Distributed Experience and Novice (superset) clean TEST SAMPLE'
 #    basename = 'Group Experienced first and second round (unique set) clean'
     fileextension = '.csv'
     path = inputbasepath + basename + fileextension
@@ -207,7 +210,7 @@ if __name__ == '__main__':
     #%%
     #build network
 #    iddict = {index:row['nodeslist'] for index,row in gn.iterrows()}
-    G_gn = buildNetwork([n for n in gn['nodeslist']],nodeAttributesDict)#,{'conceptid':{row['nodeslist']:index for index,row in gn.iterrows()})   # {m:gn[ for n in gn['nodeslist'] for m in n}})
+    G_gn = buildNetwork([n for n in gn['nodeslist']],nodeAttributesDict)
     print('Done making network ' + str(datetime.now()))
     #add attributes to nodes
     #concept id (from pandas table row?)
@@ -243,21 +246,28 @@ if __name__ == '__main__':
     np.savetxt(outpath,full_distance_matrix,delimiter=",")
     
     #%% Cluster with HDBSCAN- takes the guesswork out of determining similarity parameter
-#    print('Clustering with HDBSCAN ' + str(datetime.now()))
-#    clusterer = hdbscan.HDBSCAN(min_cluster_size=10)
-#    cluster_labels = clusterer.fit_predict(full_distance_matrix)
+    print('Clustering with HDBSCAN ' + str(datetime.now()))
+    clusterer = hdbscan.HDBSCAN(min_cluster_size=10)
+    cluster_labels = clusterer.fit_predict(full_distance_matrix)
     
     #%% Write out clustering results
     print('Writing out clustering results ' + str(datetime.now()))
     clustering_results_d = {'nodes':G_gn.nodes(),
-#                            'clusters':cluster_labels,
+                            'clusters':cluster_labels,
                             'uids':[nx.get_node_attributes(G_gn,'uid')[n] for n in G_gn.nodes()]
                             }
     clustering_results = pd.DataFrame(clustering_results_d)
     clustering_results['nodeDegree'] = clustering_results['nodes'].apply(lambda x: G_gn.degree(x))
     clustering_results['frequency'] = clustering_results['uids'].apply(lambda x: len(x))
+    nodeDegreeCentrality = nx.degree_centrality(G_gn)
+    nodeBetweennessCentrality = nx.betweenness_centrality(G_gn)
+    nodeLoadCentrality = nx.load_centrality(G_gn)
+    nodeEigenvectorCentrality = nx.eigenvector_centrality(G_gn)
+    clustering_results['nodeDegreeCentrality'] = clustering_results['nodes'].apply(lambda x: nodeDegreeCentrality[x])
+    clustering_results['nodeBetweennessCentrality'] = clustering_results['nodes'].apply(lambda x: nodeBetweennessCentrality[x])
+    clustering_results['nodeLoadCentrality'] = clustering_results['nodes'].apply(lambda x: nodeLoadCentrality[x])
+    clustering_results['nodeEigenvectorCentrality'] = clustering_results['nodes'].apply(lambda x: nodeEigenvectorCentrality[x])
     for k,v in moduleResultsDict.items():
-#        vdict = {v:k for k,v in v.items()}
         clustering_results['minClique='+str(k)] = clustering_results['nodes'].map(v)
     outpath = outputbasepath+basename+' clustering results'+'.csv'
     clustering_results.to_csv(outpath,encoding='utf-8')
