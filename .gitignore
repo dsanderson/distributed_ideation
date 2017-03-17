@@ -4,3 +4,5 @@ junk*
 *.graphml
 input_data/
 results/
+*.xlsx
+*.csv

@@ -16,9 +16,8 @@ import string
 from tqdm import tqdm
 import numpy as np
 from math import inf
-import hdbscan
 from datetime import datetime
-
+import sys
 
 def cleanPassage(rawtext):
     #some code from https://nicschrading.com/project/Intro-to-NLP-with-spaCy/
@@ -35,14 +34,14 @@ def cleanPassage(rawtext):
     tokens = parser(rawtext)
 
     # stoplist the tokens
-    tokens = [tok for tok in tokens if tok not in stopwords.words('english')]
-
+    tokens = [tok for tok in tokens if str(tok) not in stopwords.words('english')]
     return tokens
 
 def getLemmas(tokens):
     # lemmatize
     lemmas = [tok.lemma_.lower().strip() for tok in tokens]
     return lemmas
+
 
 
 def makeNodelist(tokens,limitPOS=None):
@@ -56,7 +55,7 @@ def makeNodelist(tokens,limitPOS=None):
     nodes = []
     for tok in tokens:
         goodPOS = tok.pos_ in GOODPOS
-        notStopword = tok.orth_ not in stopwords.words('english')c
+        notStopword = tok.orth_ not in stopwords.words('english')
         notSymbol = tok.orth_ not in SYMBOLS
         isMeaningful = tok.prob > probs_cutoff_lower and tok.prob < probs_cutoff_upper
 
@@ -89,7 +88,6 @@ def buildNetwork(nodesLOL,attr={}):
 
 def calculateModularity(G_gn, max_cliques=20):
     #very slow!, exp(N) complexity
-    community_growth = []
     communities = list(nx.k_clique_communities(G_gn,max_cliques+2)) #TODO Ask what the +2 is for
     return communities
 
@@ -121,9 +119,9 @@ def generateAttributesDict(tokens,uids,nodeslist):
 
 if __name__ == '__main__':
     #Read descriptions of concepts (or read in words)
-    inputbasepath = '/Volumes/SanDisk/Repos/distributed_ideation/input_data/'
-    outputbasepath = '/Volumes/SanDisk/Repos/distributed_ideation/results/'
-    basename = 'Distributed Experience and Novice (superset) clean'
+    inputbasepath = '/'
+    outputbasepath = '/'
+    basename = 'samples'
 #     basename = 'Distributed Experience and Novice (superset) clean TEST SAMPLE'
 #    basename = 'Group Experienced first and second round (unique set) clean'
     fileextension = '.csv'
@@ -151,8 +149,10 @@ if __name__ == '__main__':
     print('Done making network ' + str(datetime.now()))
 
     print('Calculating Modularity ' + str(datetime.now()))
+    max_cliques = int(sys.argv[1])
     modules = calculateModularity(G_gn, max_cliques)
-
+    num_clusters = len(modules)
+    print("num_clusters:"+str(num_clusters))
     #compare module assignments between manual ratings and automatic ratings
     #current idea: greedily assign manual to automatic by calculating jaccard sim
         #assign, remove from set, repeat
