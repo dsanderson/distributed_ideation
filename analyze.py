@@ -128,7 +128,7 @@ if __name__ == '__main__':
     path = inputbasepath + basename + fileextension
     #Add test to check whether dataframe already exists as a file
     #Then we can just read that in instead of processing raw again
-    gn = pd.read_csv(path)
+    gn = pd.read_csv(path, encoding="latin1") # add encoding for windows
     gn.rename(columns={'Text: Verbatim':'raw','Unique ID':'uid'},inplace=True)
 
     #clean passages
