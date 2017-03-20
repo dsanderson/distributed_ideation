@@ -20,13 +20,16 @@ def subsample(size, in_file):
     random.shuffle(lines)
     return lines
 
-def run_analyze(k):
-    res = subprocess.run(["python3", "analyze.py", str(k)], stdout=subprocess.PIPE)
+def run_analyze(k, size, seed):
+    res = subprocess.run(["python3", "analyze.py", str(k), str(size), str(seed)], stdout=subprocess.PIPE)
     txt = res.stdout
     m = re.search(b"num_clusters:(\d+)",txt)
     num_clusters = m.group(0)[len("num_clusters:"):]
     num_clusters = int(num_clusters)
-    return num_clusters
+    m = re.search(b"dev_clusters:(\d+)",txt)
+    dev_clusters = m.group(0)[len("dev_clusters:"):]
+    dev_clusters = int(dev_clusters)
+    return (num_clusters, dev_clusters)
 
 def print_results(points):
     for p in points:
@@ -41,11 +44,8 @@ if __name__ == '__main__':
     random.seed(seed)
     sample = subsample(size, "raw_samples.csv")
     points = []
+    resample(len(sample), sample, "samples.csv")
     for k in tqdm.tqdm(range(k_min,k_max+1)):
-        results = []
-        for _ in range(0,30):
-            resample(size, sample, "samples.csv")
-            res = run_analyze(k)
-            results.append(res)
-        points.append((size, k, statistics.mean(results), statistics.stdev(results)))
+        res = run_analyze(k, size, seed)
+        points.append((size, k, res[0], res[1]))
     print_results(points)

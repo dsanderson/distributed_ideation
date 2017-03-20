@@ -18,6 +18,8 @@ import numpy as np
 from math import inf
 from datetime import datetime
 import sys
+import statistics
+import random
 
 def cleanPassage(rawtext):
     #some code from https://nicschrading.com/project/Intro-to-NLP-with-spaCy/
@@ -74,7 +76,7 @@ def buildNetwork(nodesLOL,attr={}):
     #http://stackoverflow.com/questions/10649673/how-to-generate-a-fully-connected-subgraph-from-node-list-using-pythons-network
     #If we have the same word repeated anywhere, we only make one node for it
     G = nx.Graph()
-    for nodeslist in tqdm(nodesLOL,desc='Bulding Network'):
+    for nodeslist in nodesLOL:
         Gnew=nx.complete_graph(len(nodeslist))
         nx.relabel_nodes(Gnew,dict(enumerate(nodeslist)),copy=False)
         if attr:
@@ -128,32 +130,37 @@ if __name__ == '__main__':
     path = inputbasepath + basename + fileextension
     #Add test to check whether dataframe already exists as a file
     #Then we can just read that in instead of processing raw again
-    gn = pd.read_csv(path, encoding="latin1") # add encoding for windows
-    gn.rename(columns={'Text: Verbatim':'raw','Unique ID':'uid'},inplace=True)
+    
+    g_all = pd.read_csv(path, encoding="latin1") # add encoding for windows
+    g_all.rename(columns={'Text: Verbatim':'raw','Unique ID':'uid'},inplace=True)
+    samples = []
 
-    #clean passages
-    tqdm.pandas(desc="Make Spacy Tokens")
-    gn['tokens'] = gn['raw'].progress_apply(lambda x: cleanPassage(x))
-    gn['lemmas'] = gn['tokens'].apply(lambda x: getLemmas(x))
-    probs_cutoff_lower = findMeaningfulCutoffProbability([t for tok in gn['tokens'] for t in tok])
-    tqdm.pandas(desc="Make Nodeslist")
-    gn['nodeslist'] = gn['tokens'].progress_apply(lambda x: makeNodelist(x))
-    #Generate attributes for nodes in the graph
-    nodeAttributesDict = generateAttributesDict(gn.tokens,gn.uid,gn.nodeslist)
-    print('Done making nodelist ' + str(datetime.now()))
+    random.seed(sys.argv[3])   
+ 
+    for _ in tqdm(range(30,0,-1), desc="Bootstrapping"):
+        #resample g_all into gn
+        gn = g_all.sample(int(sys.argv[2]))
+        #clean passages
+        gn['tokens'] = gn['raw'].apply(lambda x: cleanPassage(x))
+        gn['lemmas'] = gn['tokens'].apply(lambda x: getLemmas(x))
+        probs_cutoff_lower = findMeaningfulCutoffProbability([t for tok in gn['tokens'] for t in tok])
+        gn['nodeslist'] = gn['tokens'].apply(lambda x: makeNodelist(x))
+        #Generate attributes for nodes in the graph
+        nodeAttributesDict = generateAttributesDict(gn.tokens,gn.uid,gn.nodeslist)
+        print('Done making nodelist ' + str(datetime.now()))
+        
+        path = outputbasepath + basename + ' word probabilities.csv'
+        dumpTokenProbabilities([t for tok in gn['tokens'] for t in tok],path)
 
-    path = outputbasepath + basename + ' word probabilities.csv'
-    dumpTokenProbabilities([t for tok in gn['tokens'] for t in tok],path)
-
-    G_gn = buildNetwork([n for n in gn['nodeslist']],nodeAttributesDict)
-    print('Done making network ' + str(datetime.now()))
-
-    print('Calculating Modularity ' + str(datetime.now()))
-    max_cliques = int(sys.argv[1])
-    modules = calculateModularity(G_gn, max_cliques)
-    num_clusters = len(modules)
-    print("num_clusters:"+str(num_clusters))
-    #compare module assignments between manual ratings and automatic ratings
-    #current idea: greedily assign manual to automatic by calculating jaccard sim
-        #assign, remove from set, repeat
-        #measure of performance = minimize(avg(all jaccard similarities))
+        G_gn = buildNetwork([n for n in gn['nodeslist']],nodeAttributesDict)
+        print('Done making network ' + str(datetime.now()))
+    
+        print('Calculating Modularity ' + str(datetime.now()))
+        max_cliques = int(sys.argv[1])
+        modules = calculateModularity(G_gn, max_cliques)
+        num_clusters = len(modules)
+        samples.append(num_clusters)
+    mean_num = statistics.mean(samples)
+    stddev_num = statistics.stdev(samples)
+    print("num_clusters:"+str(mean_num))
+    print("dev_clusters:"+str(stddev_num))
