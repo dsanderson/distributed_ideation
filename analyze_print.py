@@ -20,6 +20,7 @@ from datetime import datetime
 import sys
 import statistics
 import random
+import os
 
 def cleanPassage(rawtext):
     #some code from https://nicschrading.com/project/Intro-to-NLP-with-spaCy/
@@ -119,6 +120,17 @@ def generateAttributesDict(tokens,uids,nodeslist):
         d['uid'][node] = list(set(d['uid'][node]))
     return d
 
+def save_clusters(clusters, G_gn, path):
+    with open(path,'w') as f:
+        for i in range(0, len(clusters)):
+            for j in clusters[i]:
+                #f.write(token+','+str(i)+'\n')
+                degree = G_gn.degree(j)
+                ideas = G_gn.node[j]['uid']
+                s_ideas = ','.join([str(k) for k in ideas])
+                l_ideas = len(ideas)
+                print(j+','+str(i)+','+str(degree)+','+str(l_ideas)+','+s_ideas+'\n')
+
 if __name__ == '__main__':
     #Read descriptions of concepts (or read in words)
     inputbasepath = '/'
@@ -131,37 +143,33 @@ if __name__ == '__main__':
     #Add test to check whether dataframe already exists as a file
     #Then we can just read that in instead of processing raw again
     
-    g_all = pd.read_csv(path, encoding="latin1", error_bad_lines=False) # add encoding for windows
-    print(len(g_all))
+    g_all = pd.read_csv(path) # add encoding for windows
     g_all.rename(columns={'Text: Verbatim':'raw','Unique ID':'uid'},inplace=True)
     samples = []
 
-    random.seed(sys.argv[3])   
+    random.seed(os.environ['SEED']) 
  
-    for _ in tqdm(range(30,0,-1), desc="Bootstrapping"):
-        #resample g_all into gn
-        gn = g_all.sample(int(sys.argv[2]))
-        #clean passages
-        gn['tokens'] = gn['raw'].apply(lambda x: cleanPassage(x))
-        gn['lemmas'] = gn['tokens'].apply(lambda x: getLemmas(x))
-        probs_cutoff_lower = findMeaningfulCutoffProbability([t for tok in gn['tokens'] for t in tok])
-        gn['nodeslist'] = gn['tokens'].apply(lambda x: makeNodelist(x))
-        #Generate attributes for nodes in the graph
-        nodeAttributesDict = generateAttributesDict(gn.tokens,gn.uid,gn.nodeslist)
-        print('Done making nodelist ' + str(datetime.now()))
-        
-        path = outputbasepath + basename + ' word probabilities.csv'
-        dumpTokenProbabilities([t for tok in gn['tokens'] for t in tok],path)
-
-        G_gn = buildNetwork([n for n in gn['nodeslist']],nodeAttributesDict)
-        print('Done making network ' + str(datetime.now()))
+    #resample g_all into gn
+    gn = g_all.sample(int(os.environ['SIZE']))
+    #clean passages
+    gn['tokens'] = gn['raw'].apply(lambda x: cleanPassage(x))
+    gn['lemmas'] = gn['tokens'].apply(lambda x: getLemmas(x))
+    probs_cutoff_lower = findMeaningfulCutoffProbability([t for tok in gn['tokens'] for t in tok])
+    gn['nodeslist'] = gn['tokens'].apply(lambda x: makeNodelist(x))
+    #Generate attributes for nodes in the graph
+    nodeAttributesDict = generateAttributesDict(gn.tokens,gn.uid,gn.nodeslist)
+    #print('Done making nodelist ' + str(datetime.now()))
     
-        print('Calculating Modularity ' + str(datetime.now()))
-        max_cliques = int(sys.argv[1])
-        modules = calculateModularity(G_gn, max_cliques)
-        num_clusters = len(modules)
-        samples.append(num_clusters)
-    mean_num = statistics.mean(samples)
-    stddev_num = statistics.stdev(samples)
-    print("num_clusters:"+str(mean_num))
-    print("dev_clusters:"+str(stddev_num))
+    path = outputbasepath + basename + ' word probabilities.csv'
+    dumpTokenProbabilities([t for tok in gn['tokens'] for t in tok],path)
+
+    G_gn = buildNetwork([n for n in gn['nodeslist']],nodeAttributesDict)
+    #print('Done making network ' + str(datetime.now()))
+    
+    #print('Calculating Modularity ' + str(datetime.now()))
+    max_cliques = int(os.environ['K'])
+    modules = calculateModularity(G_gn, max_cliques)
+    #print(G_gn.node[list(modules[0])[0]]['uid'])
+    #print(G_gn.degree(list(modules[0])[0]))
+    #print(modules)
+    save_clusters(modules,G_gn,"clusters.csv")
